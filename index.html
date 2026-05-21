@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SportViewer</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+    <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+    <div class="app-shell">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">Personal Strava Analytics Platform</p>
+                <h1>SportViewer</h1>
+                <p class="hero-copy">Auto-load the project activity archive, inspect FIT and GPX activities in one place, and validate your dataset before building deeper analytics.</p>
+            </div>
+            <div class="hero-actions">
+                <button id="reloadProjectButton" class="button primary" type="button">Reload Project Activities</button>
+                <label class="button file-button">
+                    <span>Load Normalized JSON</span>
+                    <input id="normalizedInput" type="file" accept=".json">
+                </label>
+                <button id="saveNormalizedButton" class="button secondary" type="button" disabled>Save Normalized Data</button>
+                <button id="resetButton" class="button ghost" type="button">Reset</button>
+            </div>
+        </header>
+
+        <section class="status-bar card">
+            <div>
+                <strong id="loadingStatus">Preparing project dataset.</strong>
+                <p id="loadingMeta">SportViewer will load all FIT and GPX files from the project `activities` folder on startup.</p>
+            </div>
+            <div class="progress-wrap">
+                <progress id="loadingProgress" max="100" value="0"></progress>
+                <span id="loadingPercent">0%</span>
+            </div>
+        </section>
+
+        <section class="summary-grid" id="summaryGrid">
+            <article class="summary-card card">
+                <span class="summary-label">Activities Loaded</span>
+                <strong class="summary-value" data-summary="activitiesLoaded">0</strong>
+            </article>
+            <article class="summary-card card">
+                <span class="summary-label">FIT Files</span>
+                <strong class="summary-value" data-summary="fitFiles">0</strong>
+            </article>
+            <article class="summary-card card">
+                <span class="summary-label">GPX Files</span>
+                <strong class="summary-value" data-summary="gpxFiles">0</strong>
+            </article>
+            <article class="summary-card card">
+                <span class="summary-label">With GPS</span>
+                <strong class="summary-value" data-summary="withGps">0</strong>
+            </article>
+            <article class="summary-card card">
+                <span class="summary-label">With Heart Rate</span>
+                <strong class="summary-value" data-summary="withHr">0</strong>
+            </article>
+            <article class="summary-card card">
+                <span class="summary-label">With Cadence</span>
+                <strong class="summary-value" data-summary="withCadence">0</strong>
+            </article>
+            <article class="summary-card card">
+                <span class="summary-label">With Power</span>
+                <strong class="summary-value" data-summary="withPower">0</strong>
+            </article>
+            <article class="summary-card card summary-range-card">
+                <span class="summary-label">Date Range</span>
+                <strong class="summary-value" data-summary="dateRange">-</strong>
+            </article>
+        </section>
+
+        <main class="layout">
+            <section class="workspace">
+                <nav class="tabs card" id="viewTabs">
+                    <button class="tab-button active" type="button" data-view="dashboard">Dashboard</button>
+                    <button class="tab-button" type="button" data-view="activities">Activities</button>
+                    <button class="tab-button" type="button" data-view="diagnostics">Data Quality</button>
+                </nav>
+
+                <section class="view-panel active" data-panel="dashboard">
+                    <div class="panel-grid">
+                        <article class="card panel-section">
+                            <h2>Dataset Overview</h2>
+                            <dl class="metric-list" id="overviewList"></dl>
+                        </article>
+                        <article class="card panel-section">
+                            <h2>Load Notes</h2>
+                            <div id="loadNotes" class="notes-list empty-state-text">No dataset loaded yet.</div>
+                        </article>
+                    </div>
+                </section>
+
+                <section class="view-panel" data-panel="activities">
+                    <div class="card panel-section">
+                        <div class="filters">
+                            <label class="field">
+                                <span>Search</span>
+                                <input id="searchInput" type="search" placeholder="Search by filename, type, or date">
+                            </label>
+                            <label class="field small">
+                                <span>Year</span>
+                                <select id="yearFilter">
+                                    <option value="all">All years</option>
+                                </select>
+                            </label>
+                            <label class="field small">
+                                <span>Activity Type</span>
+                                <select id="sportFilter">
+                                    <option value="all">All types</option>
+                                </select>
+                            </label>
+                        </div>
+                        <div class="table-wrap">
+                            <table id="activityTable">
+                                <thead></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <div class="pagination">
+                            <button id="prevPageButton" class="button ghost" type="button">Previous</button>
+                            <span id="pageInfo">Page 1 of 1</span>
+                            <button id="nextPageButton" class="button ghost" type="button">Next</button>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="view-panel" data-panel="diagnostics">
+                    <div class="panel-grid diagnostics-grid">
+                        <article class="card panel-section">
+                            <h2>Diagnostics Summary</h2>
+                            <dl class="metric-list" id="diagnosticsSummary"></dl>
+                        </article>
+                        <article class="card panel-section">
+                            <h2>Problematic Files</h2>
+                            <div class="problem-table-wrap">
+                                <table id="problemTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Filename</th>
+                                            <th>Issue</th>
+                                            <th>Source</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </article>
+                    </div>
+                </section>
+            </section>
+
+            <aside class="detail-panel card" id="detailPanel">
+                <div class="detail-header">
+                    <div>
+                        <p class="eyebrow">Activity Detail</p>
+                        <h2 id="detailTitle">No activity selected</h2>
+                    </div>
+                    <span id="detailFormatBadge" class="format-badge">-</span>
+                </div>
+                <dl class="detail-summary" id="detailSummary"></dl>
+                <section class="detail-section">
+                    <h3>Route Map</h3>
+                    <div id="mapContainer"></div>
+                    <p id="mapEmptyState" class="empty-state-text">Select an activity with GPS data to view its route.</p>
+                </section>
+                <section class="detail-section">
+                    <h3>Activity Charts</h3>
+                    <div id="chartsContainer" class="charts-grid"></div>
+                    <p id="chartsEmptyState" class="empty-state-text">Charts appear when the selected activity contains chartable data.</p>
+                </section>
+            </aside>
+        </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <script type="module" src="./js/app.js"></script>
+</body>
+</html>
