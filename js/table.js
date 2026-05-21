@@ -117,7 +117,7 @@ function preserveWindowScroll(callback) {
 }
 
 export class ActivityTable {
-    constructor({ tableElement, searchInput, yearFilter, sportFilter, prevPageButton, nextPageButton, pageInfoElement, onSelect }) {
+    constructor({ tableElement, searchInput, yearFilter, sportFilter, prevPageButton, nextPageButton, pageInfoElement, onSelect, onRouteGroupSelect }) {
         this.tableElement = tableElement;
         this.thead = tableElement.querySelector('thead');
         this.tbody = tableElement.querySelector('tbody');
@@ -128,6 +128,7 @@ export class ActivityTable {
         this.nextPageButton = nextPageButton;
         this.pageInfoElement = pageInfoElement;
         this.onSelect = onSelect;
+        this.onRouteGroupSelect = onRouteGroupSelect;
 
         this.activities = [];
         this.filteredActivities = [];
@@ -215,6 +216,41 @@ export class ActivityTable {
         this.currentPage = Math.min(this.currentPage, totalPages);
         this.renderHeader();
         this.renderBody();
+    }
+
+    renderNameCellContent(activity) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'activity-name-cell';
+
+        const nameText = document.createElement('span');
+        nameText.textContent = getActivityName(activity);
+        wrapper.append(nameText);
+
+        const routeGroupSize = Math.max(1, Number(activity.routeGroupSize) || 1);
+        if (routeGroupSize > 1) {
+            const routeCountButton = document.createElement('button');
+            routeCountButton.type = 'button';
+            routeCountButton.className = 'route-count-button';
+            routeCountButton.textContent = `(${routeGroupSize})`;
+            routeCountButton.setAttribute('aria-label', `Compare ${routeGroupSize} activities on this route`);
+            routeCountButton.addEventListener('click', (event) => {
+                event.stopPropagation();
+                preserveWindowScroll(() => {
+                    this.selectedActivityId = activity.id;
+                    this.onSelect?.(activity);
+                    this.onRouteGroupSelect?.(activity);
+                    this.renderBody();
+                });
+            });
+            wrapper.append(document.createTextNode(' '), routeCountButton);
+            return wrapper;
+        }
+
+        const routeCountText = document.createElement('span');
+        routeCountText.className = 'route-count-text';
+        routeCountText.textContent = `(${routeGroupSize})`;
+        wrapper.append(document.createTextNode(' '), routeCountText);
+        return wrapper;
     }
 
     renderHeader() {
@@ -343,7 +379,11 @@ export class ActivityTable {
 
             for (const column of COLUMNS) {
                 const cell = document.createElement('td');
-                cell.textContent = column.render(activity);
+                if (column.key === 'name') {
+                    cell.append(this.renderNameCellContent(activity));
+                } else {
+                    cell.textContent = column.render(activity);
+                }
                 row.append(cell);
             }
 

@@ -24,6 +24,15 @@ const SPORT_LABELS = {
     weight_training: 'Weight Training'
 };
 
+const ROUTE_MIN_POINT_COUNT = 12;
+const ROUTE_SAMPLE_COUNT = 24;
+const ROUTE_DISTANCE_RATIO_TOLERANCE = 0.18;
+const ROUTE_ABSOLUTE_DISTANCE_TOLERANCE_KM = 1.5;
+const ROUTE_ENDPOINT_TOLERANCE_M = 250;
+const ROUTE_SAMPLE_MATCH_TOLERANCE_M = 150;
+const ROUTE_AVERAGE_DISTANCE_TOLERANCE_M = 120;
+const ROUTE_MIN_MATCH_RATIO = 0.7;
+
 function createId() {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
         return crypto.randomUUID();
@@ -101,6 +110,9 @@ export function createActivitySkeleton({ id, filename = '', sourceFormat = 'unkn
         hasHeartRate: false,
         hasCadence: false,
         hasPower: false,
+        routeGroupId: '',
+        routeGroupLabel: '',
+        routeGroupSize: 1,
         points: [],
         issues: []
     };
@@ -124,6 +136,286 @@ function haversineDistanceMeters(pointA, pointB) {
     const a = (Math.sin(deltaLat / 2) ** 2) + (Math.cos(lat1) * Math.cos(lat2) * (Math.sin(deltaLon / 2) ** 2));
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return earthRadiusM * c;
+}
+
+function getRoutePoints(activity) {
+    return Array.isArray(activity?.points)
+        ? activity.points.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon))
+        : [];
+}
+
+function interpolateCoordinate(valueA, valueB, ratio) {
+    return valueA + ((valueB - valueA) * ratio);
+}
+
+function interpolatePoint(pointA, pointB, ratio) {
+    return {
+        lat: interpolateCoordinate(pointA.lat, pointB.lat, ratio),
+        lon: interpolateCoordinate(pointA.lon, pointB.lon, ratio)
+    };
+}
+
+function buildCumulativeDistances(points) {
+    const distances = [0];
+
+    for (let index = 1; index < points.length; index += 1) {
+        distances[index] = distances[index - 1] + haversineDistanceMeters(points[index - 1], points[index]);
+    }
+
+    return distances;
+}
+
+function sampleRouteSignature(points, sampleCount = ROUTE_SAMPLE_COUNT) {
+    if (!points.length) {
+        return [];
+    }
+
+    if (points.length === 1) {
+        return [points[0]];
+    }
+
+    const cumulativeDistances = buildCumulativeDistances(points);
+    const totalDistanceM = cumulativeDistances[cumulativeDistances.length - 1];
+
+    if (!totalDistanceM) {
+        return points.slice(0, Math.min(points.length, sampleCount)).map((point) => ({
+            lat: point.lat,
+            lon: point.lon
+        }));
+    }
+
+    const signature = [];
+
+    for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
+        const ratio = sampleCount === 1 ? 0 : sampleIndex / (sampleCount - 1);
+        const targetDistanceM = totalDistanceM * ratio;
+        let segmentIndex = cumulativeDistances.findIndex((distanceM) => distanceM >= targetDistanceM);
+
+        if (segmentIndex === -1) {
+            segmentIndex = points.length - 1;
+        }
+
+        if (segmentIndex === 0) {
+            signature.push({
+                lat: points[0].lat,
+                lon: points[0].lon
+            });
+            continue;
+        }
+
+        const previousDistanceM = cumulativeDistances[segmentIndex - 1];
+        const currentDistanceM = cumulativeDistances[segmentIndex];
+        const segmentRatio = currentDistanceM > previousDistanceM
+            ? (targetDistanceM - previousDistanceM) / (currentDistanceM - previousDistanceM)
+            : 0;
+
+        signature.push(interpolatePoint(points[segmentIndex - 1], points[segmentIndex], segmentRatio));
+    }
+
+    return signature;
+}
+
+function buildRouteProfile(activity) {
+    const routePoints = getRoutePoints(activity);
+    if (routePoints.length < ROUTE_MIN_POINT_COUNT) {
+        return null;
+    }
+
+    const signature = sampleRouteSignature(routePoints);
+    if (signature.length < 2) {
+        return null;
+    }
+
+    const finalDistanceM = routePoints[routePoints.length - 1]?.distanceFromStartM ?? 0;
+
+    return {
+        sport: activity.sport,
+        distanceKm: Math.max(activity.distanceKm || 0, finalDistanceM / 1000),
+        signature,
+        startPoint: signature[0],
+        endPoint: signature[signature.length - 1]
+    };
+}
+
+function scoreRouteAlignment(signatureA, signatureB) {
+    const sampleLength = Math.min(signatureA.length, signatureB.length);
+    if (!sampleLength) {
+        return {
+            averageDistanceM: Number.POSITIVE_INFINITY,
+            matchRatio: 0
+        };
+    }
+
+    let totalDistanceM = 0;
+    let matchedSamples = 0;
+
+    for (let index = 0; index < sampleLength; index += 1) {
+        const distanceM = haversineDistanceMeters(signatureA[index], signatureB[index]);
+        totalDistanceM += distanceM;
+        if (distanceM <= ROUTE_SAMPLE_MATCH_TOLERANCE_M) {
+            matchedSamples += 1;
+        }
+    }
+
+    return {
+        averageDistanceM: totalDistanceM / sampleLength,
+        matchRatio: matchedSamples / sampleLength
+    };
+}
+
+function haveSimilarDistances(distanceKmA, distanceKmB) {
+    const safeDistanceKmA = Math.max(0, distanceKmA || 0);
+    const safeDistanceKmB = Math.max(0, distanceKmB || 0);
+    const maxDistanceKm = Math.max(safeDistanceKmA, safeDistanceKmB, 0.1);
+    const deltaKm = Math.abs(safeDistanceKmA - safeDistanceKmB);
+
+    return deltaKm <= ROUTE_ABSOLUTE_DISTANCE_TOLERANCE_KM
+        || (deltaKm / maxDistanceKm) <= ROUTE_DISTANCE_RATIO_TOLERANCE;
+}
+
+function areRoutesEquivalent(profileA, profileB) {
+    if (!profileA || !profileB || profileA.sport !== profileB.sport) {
+        return false;
+    }
+
+    if (!haveSimilarDistances(profileA.distanceKm, profileB.distanceKm)) {
+        return false;
+    }
+
+    const reversedSignatureB = [...profileB.signature].reverse();
+    const directAlignment = scoreRouteAlignment(profileA.signature, profileB.signature);
+    const reversedAlignment = scoreRouteAlignment(profileA.signature, reversedSignatureB);
+    const directEndpointDistanceM = Math.max(
+        haversineDistanceMeters(profileA.startPoint, profileB.startPoint),
+        haversineDistanceMeters(profileA.endPoint, profileB.endPoint)
+    );
+    const reversedEndpointDistanceM = Math.max(
+        haversineDistanceMeters(profileA.startPoint, profileB.endPoint),
+        haversineDistanceMeters(profileA.endPoint, profileB.startPoint)
+    );
+
+    return [
+        {
+            endpointDistanceM: directEndpointDistanceM,
+            alignment: directAlignment
+        },
+        {
+            endpointDistanceM: reversedEndpointDistanceM,
+            alignment: reversedAlignment
+        }
+    ].some((candidate) => candidate.endpointDistanceM <= ROUTE_ENDPOINT_TOLERANCE_M
+        && candidate.alignment.averageDistanceM <= ROUTE_AVERAGE_DISTANCE_TOLERANCE_M
+        && candidate.alignment.matchRatio >= ROUTE_MIN_MATCH_RATIO);
+}
+
+function pickRouteGroupLabel(activities) {
+    const names = new Map();
+
+    for (const activity of activities) {
+        const name = getActivityName(activity);
+        const startedAt = activity.startTime instanceof Date ? activity.startTime.getTime() : Number.MAX_SAFE_INTEGER;
+        const currentEntry = names.get(name) || {
+            name,
+            count: 0,
+            earliestStartTime: startedAt
+        };
+
+        currentEntry.count += 1;
+        currentEntry.earliestStartTime = Math.min(currentEntry.earliestStartTime, startedAt);
+        names.set(name, currentEntry);
+    }
+
+    return [...names.values()]
+        .sort((entryA, entryB) => {
+            if (entryB.count !== entryA.count) {
+                return entryB.count - entryA.count;
+            }
+            if (entryA.earliestStartTime !== entryB.earliestStartTime) {
+                return entryA.earliestStartTime - entryB.earliestStartTime;
+            }
+            return entryA.name.localeCompare(entryB.name, undefined, {
+                numeric: true,
+                sensitivity: 'base'
+            });
+        })[0]?.name || getActivityName(activities[0]);
+}
+
+function applyRouteGroups(activities) {
+    const groupedActivities = activities.map((activity) => ({
+        ...activity,
+        routeGroupId: activity.routeGroupId || '',
+        routeGroupLabel: activity.routeGroupLabel || '',
+        routeGroupSize: Math.max(1, Math.round(toFiniteNumber(activity.routeGroupSize) ?? 1))
+    }));
+    const routeProfiles = groupedActivities.map((activity) => buildRouteProfile(activity));
+    const parents = groupedActivities.map((_, index) => index);
+
+    const findParent = (index) => {
+        if (parents[index] !== index) {
+            parents[index] = findParent(parents[index]);
+        }
+        return parents[index];
+    };
+
+    const mergeParents = (indexA, indexB) => {
+        const parentA = findParent(indexA);
+        const parentB = findParent(indexB);
+        if (parentA !== parentB) {
+            parents[parentB] = parentA;
+        }
+    };
+
+    for (let indexA = 0; indexA < groupedActivities.length; indexA += 1) {
+        for (let indexB = indexA + 1; indexB < groupedActivities.length; indexB += 1) {
+            if (areRoutesEquivalent(routeProfiles[indexA], routeProfiles[indexB])) {
+                mergeParents(indexA, indexB);
+            }
+        }
+    }
+
+    const routeGroupMap = new Map();
+    for (let index = 0; index < groupedActivities.length; index += 1) {
+        const rootIndex = findParent(index);
+        const group = routeGroupMap.get(rootIndex) || [];
+        group.push(index);
+        routeGroupMap.set(rootIndex, group);
+    }
+
+    const routeGroups = [...routeGroupMap.values()]
+        .map((groupIndices) => groupIndices.map((index) => groupedActivities[index]))
+        .sort((groupA, groupB) => {
+            if (groupB.length !== groupA.length) {
+                return groupB.length - groupA.length;
+            }
+
+            const timeA = groupA[0]?.startTime instanceof Date ? groupA[0].startTime.getTime() : 0;
+            const timeB = groupB[0]?.startTime instanceof Date ? groupB[0].startTime.getTime() : 0;
+            return timeB - timeA;
+        })
+        .map((groupActivities, groupIndex) => {
+            const routeGroupLabel = pickRouteGroupLabel(groupActivities);
+            const sortedActivityIds = groupActivities.map((activity) => activity.id).sort((idA, idB) => String(idA).localeCompare(String(idB)));
+            const routeGroupId = `route-${sortedActivityIds[0] || groupIndex + 1}`;
+
+            for (const activity of groupActivities) {
+                activity.routeGroupId = routeGroupId;
+                activity.routeGroupLabel = routeGroupLabel;
+                activity.routeGroupSize = groupActivities.length;
+            }
+
+            return {
+                id: routeGroupId,
+                label: routeGroupLabel,
+                sport: groupActivities[0]?.sport || 'Unknown',
+                size: groupActivities.length,
+                activityIds: groupActivities.map((activity) => activity.id)
+            };
+        });
+
+    return {
+        activities: groupedActivities,
+        routeGroups
+    };
 }
 
 function computeElevationStats(points) {
@@ -331,6 +623,9 @@ export function finalizeActivity(activity) {
         avgPower: toFiniteNumber(activity.avgPower),
         maxPower: toFiniteNumber(activity.maxPower),
         calories: toFiniteNumber(activity.calories),
+        routeGroupId: String(activity.routeGroupId || '').trim(),
+        routeGroupLabel: String(activity.routeGroupLabel || '').trim(),
+        routeGroupSize: Math.max(1, Math.round(toFiniteNumber(activity.routeGroupSize) ?? 1)),
         points: Array.isArray(activity.points) ? enrichPoints(activity.points) : [],
         issues: Array.isArray(activity.issues) ? [...new Set(activity.issues)] : []
     };
@@ -422,6 +717,11 @@ export function getActivityName(activity) {
     return 'Unnamed activity';
 }
 
+export function getActivityNameWithRouteCount(activity) {
+    const routeGroupSize = Math.max(1, Math.round(toFiniteNumber(activity?.routeGroupSize) ?? 1));
+    return `${getActivityName(activity)} (${routeGroupSize})`;
+}
+
 export class ActivityDatabase {
     constructor() {
         this.reset();
@@ -429,12 +729,16 @@ export class ActivityDatabase {
 
     reset() {
         this.activities = [];
+        this.routeGroups = [];
         this.parsingErrors = [];
         this.loadNotes = [];
     }
 
     replaceAll(activities, { parsingErrors = [], loadNotes = [] } = {}) {
-        this.activities = Array.isArray(activities) ? activities.map((activity) => finalizeActivity(activity)) : [];
+        const finalizedActivities = Array.isArray(activities) ? activities.map((activity) => finalizeActivity(activity)) : [];
+        const routeGrouping = applyRouteGroups(finalizedActivities);
+        this.activities = routeGrouping.activities;
+        this.routeGroups = routeGrouping.routeGroups;
         this.parsingErrors = Array.isArray(parsingErrors)
             ? parsingErrors.map((error) => ({
                 filename: error.filename || 'Unknown file',
@@ -443,6 +747,11 @@ export class ActivityDatabase {
             }))
             : [];
         this.loadNotes = Array.isArray(loadNotes) ? loadNotes.filter(Boolean) : [];
+
+        if (this.activities.length) {
+            const repeatedRouteGroups = this.routeGroups.filter((group) => group.size > 1).length;
+            this.loadNotes.push(`Detected ${this.routeGroups.length} route groups across ${this.activities.filter((activity) => activity.hasGps).length} GPS activities (${repeatedRouteGroups} repeated routes).`);
+        }
     }
 
     getActivities() {
@@ -451,6 +760,21 @@ export class ActivityDatabase {
             const timeB = activityB.startTime instanceof Date ? activityB.startTime.getTime() : 0;
             return timeB - timeA;
         });
+    }
+
+    getRouteGroups() {
+        return this.routeGroups.map((routeGroup) => ({
+            ...routeGroup,
+            activityIds: [...routeGroup.activityIds]
+        }));
+    }
+
+    getRouteGroup(routeGroupId) {
+        return this.routeGroups.find((routeGroup) => routeGroup.id === routeGroupId) || null;
+    }
+
+    getActivitiesByRouteGroup(routeGroupId) {
+        return this.getActivities().filter((activity) => activity.routeGroupId === routeGroupId);
     }
 
     getSummary() {

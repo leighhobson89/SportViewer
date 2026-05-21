@@ -1,6 +1,7 @@
 import { ActivityDatabase, formatDate, formatDuration, formatNumber } from './database.js';
 import { parseFitFile } from './parser-fit.js';
 import { parseGpxFile } from './parser-gpx.js';
+import { RouteComparisonTable } from './route-compare.js';
 import { ActivityTable } from './table.js';
 import { DetailView } from './detail.js';
 
@@ -43,6 +44,10 @@ const elements = {
     prevPageButton: document.getElementById('prevPageButton'),
     nextPageButton: document.getElementById('nextPageButton'),
     pageInfo: document.getElementById('pageInfo'),
+    routeComparisonTitle: document.getElementById('routeComparisonTitle'),
+    routeComparisonMeta: document.getElementById('routeComparisonMeta'),
+    routeComparisonTable: document.getElementById('routeComparisonTable'),
+    routeComparisonEmptyState: document.getElementById('routeComparisonEmptyState'),
     detailTitle: document.getElementById('detailTitle'),
     detailFormatBadge: document.getElementById('detailFormatBadge'),
     detailSummary: document.getElementById('detailSummary'),
@@ -51,6 +56,9 @@ const elements = {
     chartsContainer: document.getElementById('chartsContainer'),
     chartsEmptyState: document.getElementById('chartsEmptyState')
 };
+
+let selectedActivityId = null;
+let selectedRouteGroupId = null;
 
 const detailView = new DetailView({
     titleElement: elements.detailTitle,
@@ -62,6 +70,14 @@ const detailView = new DetailView({
     chartsEmptyState: elements.chartsEmptyState
 });
 
+const routeComparisonTable = new RouteComparisonTable({
+    tableElement: elements.routeComparisonTable,
+    emptyStateElement: elements.routeComparisonEmptyState,
+    onSelect: (activity) => {
+        selectActivity(activity);
+    }
+});
+
 const activityTable = new ActivityTable({
     tableElement: elements.activityTable,
     searchInput: elements.searchInput,
@@ -71,7 +87,12 @@ const activityTable = new ActivityTable({
     nextPageButton: elements.nextPageButton,
     pageInfoElement: elements.pageInfo,
     onSelect: (activity) => {
-        detailView.render(activity);
+        selectActivity(activity, {
+            updateActivityTable: false
+        });
+    },
+    onRouteGroupSelect: (activity) => {
+        openRouteComparison(activity);
     }
 });
 
@@ -199,6 +220,72 @@ function renderDiagnostics() {
     elements.problemTableBody.replaceChildren(...rows);
 }
 
+function selectActivity(activity, { updateActivityTable = true, updateRouteComparisonTable = true } = {}) {
+    if (!activity) {
+        selectedActivityId = null;
+        if (updateActivityTable) {
+            activityTable.setSelectedActivity(null);
+        }
+        if (updateRouteComparisonTable) {
+            routeComparisonTable.setSelectedActivity(null);
+        }
+        detailView.reset();
+        return;
+    }
+
+    selectedActivityId = activity.id;
+    if (updateActivityTable) {
+        activityTable.setSelectedActivity(activity.id);
+    }
+    if (updateRouteComparisonTable) {
+        routeComparisonTable.setSelectedActivity(activity.id);
+    }
+    detailView.render(activity);
+}
+
+function openRouteComparison(activity) {
+    if (!activity?.routeGroupId || (activity.routeGroupSize || 1) <= 1) {
+        return;
+    }
+
+    selectedRouteGroupId = activity.routeGroupId;
+    renderRouteComparison();
+    setActiveView('routes');
+}
+
+function renderRouteComparison() {
+    const routeGroup = selectedRouteGroupId ? database.getRouteGroup(selectedRouteGroupId) : null;
+    const routeActivities = routeGroup ? database.getActivitiesByRouteGroup(routeGroup.id) : [];
+    const routeComparisonTableWrap = elements.routeComparisonTable.parentElement;
+
+    if (!routeGroup || routeActivities.length < 2) {
+        if (!routeGroup) {
+            selectedRouteGroupId = null;
+        }
+
+        elements.routeComparisonTitle.textContent = 'Route Comparison';
+        elements.routeComparisonMeta.textContent = selectedRouteGroupId
+            ? 'This route no longer has enough matching activities to compare.'
+            : 'Click a route count greater than 1 in the Activities table to compare activities on the same route.';
+        routeComparisonTableWrap.hidden = true;
+        routeComparisonTable.setComparisonActivities([]);
+        return;
+    }
+
+    elements.routeComparisonTitle.textContent = routeGroup.label;
+    elements.routeComparisonMeta.textContent = `${routeGroup.sport} route with ${routeGroup.size} matching activities. Click a row to inspect the activity details.`;
+    routeComparisonTableWrap.hidden = false;
+    routeComparisonTable.setComparisonActivities(routeActivities);
+
+    const selectedRouteActivity = routeActivities.find((activity) => activity.id === selectedActivityId) || routeActivities[0] || null;
+    if (selectedRouteActivity) {
+        selectActivity(selectedRouteActivity, {
+            updateActivityTable: true,
+            updateRouteComparisonTable: true
+        });
+    }
+}
+
 function renderActivities() {
     const activities = database.getActivities();
     activityTable.updateFilterOptions({
@@ -207,18 +294,18 @@ function renderActivities() {
     });
     activityTable.setActivities(activities);
 
-    if (activities.length) {
-        activityTable.setSelectedActivity(activities[0].id);
-        detailView.render(activities[0]);
-    } else {
-        detailView.reset();
-    }
+    const selectedActivity = activities.find((activity) => activity.id === selectedActivityId) || activities[0] || null;
+    selectActivity(selectedActivity, {
+        updateActivityTable: true,
+        updateRouteComparisonTable: false
+    });
 }
 
 function renderAll() {
     renderSummary();
     renderDiagnostics();
     renderActivities();
+    renderRouteComparison();
     elements.saveNormalizedButton.disabled = !database.getActivities().length;
 }
 
@@ -503,10 +590,9 @@ function downloadNormalizedDataset() {
 
 function resetApplication() {
     database.reset();
-    activityTable.setActivities([]);
-    detailView.reset();
-    renderSummary();
-    renderDiagnostics();
+    selectedActivityId = null;
+    selectedRouteGroupId = null;
+    renderAll();
     elements.saveNormalizedButton.disabled = true;
     setLoadingState('No dataset loaded.', 'Load the cached dataset by refreshing the page, or import the project `activities` folder again.', 0);
     elements.normalizedInput.value = '';

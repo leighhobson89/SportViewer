@@ -77,6 +77,7 @@
                 <nav class="tabs card" id="viewTabs">
                     <button class="tab-button active" type="button" data-view="dashboard">Dashboard</button>
                     <button class="tab-button" type="button" data-view="activities">Activities</button>
+                    <button class="tab-button" type="button" data-view="routes">Route Comparison</button>
                     <button class="tab-button" type="button" data-view="diagnostics">Data Quality</button>
                 </nav>
 
@@ -123,6 +124,24 @@
                             <button id="prevPageButton" class="button ghost" type="button">Previous</button>
                             <span id="pageInfo">Page 1 of 1</span>
                             <button id="nextPageButton" class="button ghost" type="button">Next</button>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="view-panel" data-panel="routes">
+                    <div class="card panel-section">
+                        <div class="panel-heading">
+                            <div>
+                                <h2 id="routeComparisonTitle">Route Comparison</h2>
+                                <p id="routeComparisonMeta" class="panel-meta">Click a route count greater than 1 in the Activities table to compare activities on the same route.</p>
+                            </div>
+                        </div>
+                        <p id="routeComparisonEmptyState" class="empty-state-text">No repeated route selected yet.</p>
+                        <div class="table-wrap" hidden>
+                            <table id="routeComparisonTable" hidden>
+                                <thead></thead>
+                                <tbody></tbody>
+                            </table>
                         </div>
                     </div>
                 </section>

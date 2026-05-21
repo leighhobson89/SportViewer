@@ -267,6 +267,19 @@ progress {
     margin: 0 0 16px;
 }
 
+.panel-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+    margin-bottom: 18px;
+}
+
+.panel-meta {
+    margin: 8px 0 0;
+    color: var(--text-soft);
+}
+
 .metric-list,
 .detail-summary {
     display: grid;
@@ -332,6 +345,7 @@ progress {
 }
 
 #activityTable,
+#routeComparisonTable,
 #problemTable {
     width: 100%;
     border-collapse: collapse;
@@ -340,6 +354,8 @@ progress {
 
 #activityTable th,
 #activityTable td,
+#routeComparisonTable th,
+#routeComparisonTable td,
 #problemTable th,
 #problemTable td {
     padding: 12px 14px;
@@ -349,18 +365,45 @@ progress {
 }
 
 #activityTable tbody tr,
+#routeComparisonTable tbody tr,
 #problemTable tbody tr {
     transition: background 0.2s ease;
 }
 
 #activityTable tbody tr:hover,
-#activityTable tbody tr:focus-visible {
+#activityTable tbody tr:focus-visible,
+#routeComparisonTable tbody tr:hover,
+#routeComparisonTable tbody tr:focus-visible {
     background: rgba(56, 189, 248, 0.08);
     outline: none;
 }
 
-#activityTable tbody tr.selected {
+#activityTable tbody tr.selected,
+#routeComparisonTable tbody tr.selected {
     background: rgba(20, 184, 166, 0.14);
+}
+
+.activity-name-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.route-count-button {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--primary);
+    font-weight: 700;
+}
+
+.route-count-button:hover {
+    color: var(--accent);
+}
+
+.route-count-text {
+    color: var(--text-soft);
+    font-weight: 600;
 }
 
 .sort-button {
