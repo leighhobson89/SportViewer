@@ -13,10 +13,10 @@
             <div>
                 <p class="eyebrow">Personal Strava Analytics Platform</p>
                 <h1>SportViewer</h1>
-                <p class="hero-copy">Auto-load the project activity archive, inspect FIT and GPX activities in one place, and validate your dataset before building deeper analytics.</p>
+                <p class="hero-copy">Import the project activity archive on demand, cache it locally in your browser, and inspect FIT and GPX activities without rebuilding the dataset every visit.</p>
             </div>
             <div class="hero-actions">
-                <button id="reloadProjectButton" class="button primary" type="button">Reload Project Activities</button>
+                <button id="reloadProjectButton" class="button primary" type="button">Import Project Activities</button>
                 <label class="button file-button">
                     <span>Load Normalized JSON</span>
                     <input id="normalizedInput" type="file" accept=".json">
@@ -28,8 +28,8 @@
 
         <section class="status-bar card">
             <div>
-                <strong id="loadingStatus">Preparing project dataset.</strong>
-                <p id="loadingMeta">SportViewer will load all FIT and GPX files from the project `activities` folder on startup.</p>
+                <strong id="loadingStatus">Checking local cache.</strong>
+                <p id="loadingMeta">SportViewer can load a previously imported dataset from this browser cache, or you can import the project `activities` folder manually.</p>
             </div>
             <div class="progress-wrap">
                 <progress id="loadingProgress" max="100" value="0"></progress>

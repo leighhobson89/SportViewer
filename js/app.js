@@ -7,6 +7,9 @@ import { DetailView } from './detail.js';
 const database = new ActivityDatabase();
 const PROJECT_ACTIVITIES_DIR = './activities/';
 const PROJECT_MANIFEST_URL = './activities-manifest.json';
+const CACHE_DB_NAME = 'sportviewer-cache';
+const CACHE_STORE_NAME = 'datasets';
+const CACHE_DATASET_KEY = 'project-activities';
 
 const elements = {
     reloadProjectButton: document.getElementById('reloadProjectButton'),
@@ -69,7 +72,6 @@ const activityTable = new ActivityTable({
     pageInfoElement: elements.pageInfo,
     onSelect: (activity) => {
         detailView.render(activity);
-        activityTable.setSelectedActivity(activity.id);
     }
 });
 
@@ -259,6 +261,72 @@ function createProjectSourceFile(filename) {
     };
 }
 
+function openCacheDatabase() {
+    return new Promise((resolve, reject) => {
+        const request = window.indexedDB.open(CACHE_DB_NAME, 1);
+
+        request.onerror = () => reject(request.error || new Error('Unable to open browser cache'));
+        request.onupgradeneeded = () => {
+            const databaseInstance = request.result;
+            if (!databaseInstance.objectStoreNames.contains(CACHE_STORE_NAME)) {
+                databaseInstance.createObjectStore(CACHE_STORE_NAME);
+            }
+        };
+        request.onsuccess = () => resolve(request.result);
+    });
+}
+
+async function withCacheStore(mode, operation) {
+    const cacheDatabase = await openCacheDatabase();
+
+    return new Promise((resolve, reject) => {
+        const transaction = cacheDatabase.transaction(CACHE_STORE_NAME, mode);
+        const store = transaction.objectStore(CACHE_STORE_NAME);
+
+        let request;
+        try {
+            request = operation(store);
+        } catch (error) {
+            cacheDatabase.close();
+            reject(error);
+            return;
+        }
+
+        transaction.oncomplete = () => {
+            cacheDatabase.close();
+            resolve(request?.result);
+        };
+        transaction.onerror = () => {
+            cacheDatabase.close();
+            reject(transaction.error || request?.error || new Error('Browser cache transaction failed'));
+        };
+        transaction.onabort = () => {
+            cacheDatabase.close();
+            reject(transaction.error || new Error('Browser cache transaction aborted'));
+        };
+    });
+}
+
+async function loadCachedDataset() {
+    try {
+        return await withCacheStore('readonly', (store) => store.get(CACHE_DATASET_KEY));
+    } catch {
+        return null;
+    }
+}
+
+async function clearCachedDataset() {
+    try {
+        await withCacheStore('readwrite', (store) => store.delete(CACHE_DATASET_KEY));
+    } catch {
+        return;
+    }
+}
+
+async function saveCachedDataset(payload) {
+    await withCacheStore('readwrite', (store) => store.put(payload, CACHE_DATASET_KEY));
+}
+
 function buildSourceFilesFromProjectFiles(filenames) {
     return filenames
         .filter((filename) => getFileFormat(filename))
@@ -389,14 +457,20 @@ async function parseSourceFiles(sourceFiles, sourceLabel) {
         `Loaded ${activities.length} activities with ${parsingErrors.length} parsing errors from ${sourceLabel}.`,
         100
     );
+
+    return database.serialize();
 }
 
 async function loadProjectActivities() {
     elements.reloadProjectButton.disabled = true;
 
     try {
+        setLoadingState('Resetting cached dataset...', 'Removing any previous cached activity database before import.', 1);
+        await clearCachedDataset();
         const sourceFiles = await buildProjectSourceFiles();
-        await parseSourceFiles(sourceFiles, 'project activities folder');
+        const serializedPayload = await parseSourceFiles(sourceFiles, 'project activities folder');
+        await saveCachedDataset(serializedPayload);
+        setLoadingState('Import complete', `Loaded ${database.getActivities().length} activities and refreshed the local browser cache.`, 100);
         setActiveView('dashboard');
     } finally {
         elements.reloadProjectButton.disabled = false;
@@ -434,7 +508,7 @@ function resetApplication() {
     renderSummary();
     renderDiagnostics();
     elements.saveNormalizedButton.disabled = true;
-    setLoadingState('Preparing project dataset.', 'SportViewer will load all FIT and GPX files from the project `activities` folder on startup.', 0);
+    setLoadingState('No dataset loaded.', 'Load the cached dataset by refreshing the page, or import the project `activities` folder again.', 0);
     elements.normalizedInput.value = '';
 }
 
@@ -473,15 +547,9 @@ function bindEvents() {
         }
     });
 
-    elements.resetButton.addEventListener('click', async () => {
+    elements.resetButton.addEventListener('click', () => {
         resetApplication();
         setActiveView('dashboard');
-
-        try {
-            await loadProjectActivities();
-        } catch (error) {
-            setLoadingState('Auto-load failed', error?.message || 'Unable to load project activities.', 0);
-        }
     });
 }
 
@@ -489,12 +557,20 @@ async function initializeApplication() {
     bindEvents();
     renderAll();
     setActiveView('dashboard');
-    setLoadingState('Preparing project dataset.', 'Scanning the project `activities` folder for FIT and GPX files.', 1);
+    setLoadingState('Checking local cache.', 'Looking for a previously imported dataset in this browser.', 5);
 
     try {
-        await loadProjectActivities();
+        const cachedPayload = await loadCachedDataset();
+        if (!cachedPayload) {
+            setLoadingState('No cached dataset.', 'Click `Import Project Activities` to build and cache the dataset for this browser.', 0);
+            return;
+        }
+
+        database.loadNormalizedDataset(cachedPayload);
+        renderAll();
+        setLoadingState('Loaded cached dataset.', `Loaded ${database.getActivities().length} activities from the local browser cache.`, 100);
     } catch (error) {
-        setLoadingState('Auto-load unavailable', error?.message || 'Unable to load the project activities folder.', 0);
+        setLoadingState('Cache load failed', error?.message || 'Unable to load the cached dataset from this browser.', 0);
     }
 }
 

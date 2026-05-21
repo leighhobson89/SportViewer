@@ -105,6 +105,17 @@ function compareValues(valueA, valueB) {
     return (valueA || 0) - (valueB || 0);
 }
 
+function preserveWindowScroll(callback) {
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+
+    callback();
+
+    requestAnimationFrame(() => {
+        window.scrollTo(scrollX, scrollY);
+    });
+}
+
 export class ActivityTable {
     constructor({ tableElement, searchInput, yearFilter, sportFilter, prevPageButton, nextPageButton, pageInfoElement, onSelect }) {
         this.tableElement = tableElement;
@@ -312,17 +323,21 @@ export class ActivityTable {
             }
 
             row.addEventListener('click', () => {
-                this.selectedActivityId = activity.id;
-                this.onSelect?.(activity);
-                this.renderBody();
+                preserveWindowScroll(() => {
+                    this.selectedActivityId = activity.id;
+                    this.onSelect?.(activity);
+                    this.renderBody();
+                });
             });
 
             row.addEventListener('keydown', (event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
-                    this.selectedActivityId = activity.id;
-                    this.onSelect?.(activity);
-                    this.renderBody();
+                    preserveWindowScroll(() => {
+                        this.selectedActivityId = activity.id;
+                        this.onSelect?.(activity);
+                        this.renderBody();
+                    });
                 }
             });
 
